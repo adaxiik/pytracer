@@ -23,6 +23,7 @@ class PyTracer:
     def __init__(self, resolution: tuple[int,int]=(1280,720), arch: Arch=Arch.CPU, render_resolution_factor: float=1.0):
         self.resolution = resolution
         self.arch : ti.types.arch = self._get_arch(arch)
+        self.arch_param = arch
         ti.init(arch=self.arch)
 
         window_width, window_height = resolution
@@ -93,7 +94,7 @@ class PyTracer:
             dpg.add_text(f"FPS: {dpg.get_frame_rate()}", tag=self.FPS_LABEL_TAG)
             dpg.add_text(f"Resolution: {self.width}x{self.height}" , tag=self.RESOLUTION_LABEL_TAG)
             dpg.add_text(f"Render Resolution: {self.render_width}x{self.render_height}" , tag=self.RENDER_RESOLUTION_LABEL_TAG)
-            dpg.add_text(f"Arch: {self.arch}")
+            dpg.add_text(f"Arch: {self.arch_param}")
             dpg.add_text(f"Loot at: 0, 0, 0", tag=self.LOOK_AT_LABEL_TAG)
     
     def _update_info_window(self):
@@ -104,10 +105,16 @@ class PyTracer:
         self._init_dpg()
         self._create_info_window()
 
-        from .render import Renderer
+        from .render import Renderer, Scene, Sphere, Material
         import taichi.math as tm
 
-        renderer = Renderer(self.screen_buffer, tm.vec2(self.render_height, self.render_width))
+        scene = Scene()
+        scene.map.append(Sphere(tm.vec3(0, 0, 0), 1, Material(tm.vec3(1, 0, 0), tm.vec3(0, 0, 0), 0)))
+        scene.map.append(Sphere(tm.vec3(2, 0, 0), 1, Material(tm.vec3(0, 1, 0), tm.vec3(0, 0, 0), 0)))
+        scene.map.append(Sphere(tm.vec3(0, 5, 5), 4, Material(tm.vec3(0,0,0), tm.vec3(1,1,1), 1.0)))
+        scene.map.append(Sphere(tm.vec3(0, -101, 0), 100, Material(tm.vec3(0,0,1), tm.vec3(0,0,0), 0.0)))
+
+        renderer = Renderer(self.screen_buffer, tm.vec2(self.render_height, self.render_width), scene, 4)
         look_at = tm.vec3(1, 0, 0)
         while dpg.is_dearpygui_running():
             
