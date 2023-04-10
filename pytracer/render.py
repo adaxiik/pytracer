@@ -25,18 +25,17 @@ class Ray:
 
 @ti.dataclass
 class Material:
-    color: tm.vec3 = tm.vec3(0,0,0)
-    emissive_color: tm.vec3 = tm.vec3(0,0,0)
-    emissive_strength: ti.f32 = 0.0
+    color: tm.vec3 
+    emissive_color: tm.vec3 
+    emissive_strength: ti.f32
 
 @ti.dataclass
 class Hit:
-    position: tm.vec3 = tm.vec3(0,0,0)
-    normal: tm.vec3 = tm.vec3(0,0,0)
-    distance: ti.f32 = -1.0
-    material: Material = Material(tm.vec3(0,0,0))
-    hit : ti.i8 = 0
-
+    position: tm.vec3 
+    normal: tm.vec3 
+    distance: ti.f32
+    material: Material
+    hit : ti.i8 
 
 
 # @ti.func
@@ -83,61 +82,71 @@ class Scene:
 
 @ti.data_oriented
 class Renderer:
-    def __init__(self, buffer: ti.types.vector, resolution: tm.vec2, scene: Scene, bounce_limit: ti.i32 = 2):
+    def __init__(self, buffer: ti.types.vector
+                 , resolution: tm.vec2
+                 , scene: Scene
+                 , bounce_limit: ti.i32 = 2
+                 , samples: ti.i32 = 4):
         self.buffer = buffer
         self.resolution = resolution
         self.scene = scene
         self.bounce_limit = bounce_limit
+        self.samples = samples
         
     @ti.func
-    def trace_ray(self, ray: Ray, rng : Rng) -> Hit:
+    def trace_ray(self, ray: Ray) -> Hit:
 
         hit_info = Hit()
+        hit_info.distance = 1000000.0
         
         for i in ti.static(range(len(self.scene.map))):
             sphere = self.scene.map[i]
             hit_info_new = sphere.intersect(ray)
-            if hit_info_new.hit == 1 and (hit_info_new.distance < hit_info.distance or hit_info.hit == 0):
+            if hit_info_new.hit == 1 and (hit_info_new.distance < hit_info.distance):
                 hit_info = hit_info_new
 
         return hit_info
     
+    @ti.func
+    def calculate_color(self, ray: Ray, rng) -> tm.vec3:
+        ray_color = tm.vec3(1, 1, 1)
+        accumulated_light = tm.vec3(0, 0, 0)
 
+        for _ in range(self.bounce_limit):
+            hit_info = self.trace_ray(ray)
+            if hit_info.hit == 0:
+                break
+
+            ray.origin = hit_info.position
+            ray.direction = tm.normalize(hit_info.normal + rng.random_direction())
+
+            light = hit_info.material.emissive_color * hit_info.material.emissive_strength
+            accumulated_light += ray_color * light
+            ray_color *= hit_info.material.color
+        
+        return accumulated_light
 
     @ti.kernel
-    def render(self, oscilating: tm.vec3):
+    def render(self,frame_count: ti.u64 , oscilating: tm.vec3):
         for i, j in self.buffer:
             uv = (tm.vec2(i, j) - 0.5 * self.resolution) / self.resolution.x # make 0,0 in the center and fix aspect ratio
             uv = tm.vec2(uv.y, uv.x) # flip x and y ... idk, some kind of taichi -> numpy -> imgui thing
 
-            random_seed : ti.u32 = i * 115615616 * j * 123123123 + 6969
+            random_seed : ti.u32 = i * 420420 * j * 696969 + 696969 + frame_count * 42069
             rng = Rng(random_seed)
 
-            # self.buffer[i, j] = tm.vec3(uv, 0)
-
-            # radius = 0.125
-            # dist = tm.length(uv - tm.vec2(look_at[0]/4, look_at[2]/4)) - radius
-            # if dist < radius:
-            #     self.buffer[i, j] = tm.vec3(1, 0, 0)
-            campos = tm.vec3(0, 5, -5)
+            campos = oscilating
             cam = Camera(campos, tm.vec3(0,0,0))
             ray = Ray(cam.position, cam.look_at(uv))
 
-            ray_color = tm.vec3(1, 1, 1)
-            accumulated_light = tm.vec3(0, 0, 0)
+            final_color = tm.vec3(0,0,0)
+            for _ in range(self.samples):
+                final_color += self.calculate_color(ray, rng)
+                rng.next()
 
-            for _ in range(self.bounce_limit):
-                hit_info = self.trace_ray(ray, rng)
-                if hit_info.hit == 0:
-                    break
+            final_color /= self.samples
 
-                ray.origin = hit_info.position
-                ray.direction = rng.random_direction_in_hemisphere(hit_info.normal)
-
-                light = hit_info.material.emissive_color * hit_info.material.emissive_strength
-                accumulated_light += ray_color * light
-                ray_color *= hit_info.material.color
-
-
-            self.buffer[i, j] = accumulated_light
+            # progressive rendering
+            color_weight: ti.f32 = 1.0 / (frame_count + 1)
+            self.buffer[i, j] = self.buffer[i, j] * (1.0 - color_weight) + final_color * color_weight
             

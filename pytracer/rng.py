@@ -4,6 +4,10 @@ import taichi.math as tm
 class Rng:
     state: ti.u32 = 0
 
+    @ti.func
+    def next(self):
+        self.state += 1
+
     # https://stackoverflow.com/questions/4200224/random-noise-functions-for-glsl
     @ti.func
     def random_u32(self) -> ti.u32:

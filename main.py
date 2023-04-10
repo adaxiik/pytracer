@@ -4,7 +4,7 @@ import typer
 
 
 def main(arch: Arch = Arch.CPU):
-    PyTracer(arch=arch,render_resolution_factor=0.8).run()
+    PyTracer(arch=arch,render_resolution_factor=0.5).run()
 
 
 if __name__ == "__main__":

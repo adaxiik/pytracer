@@ -1,15 +1,16 @@
 from enum import Enum
 class Arch(str, Enum):
     CPU = "cpu"
-    GPU = "gpu"
     CUDA = "cuda"
     METAL = "metal"
-    OPENGL = "opengl"
     VULKAN = "vulkan"
 
 import taichi as ti
+import taichi.math as tm
 import dearpygui.dearpygui as dpg
 import numpy as np
+from .render import Renderer
+
 
 class PyTracer:
     PRIMARY_WINDOW_TAG = "primary"
@@ -33,6 +34,10 @@ class PyTracer:
         self.render_width, self.render_height = render_width, render_height
 
         self.screen_buffer: ti.types.vector = ti.Vector.field(3, ti.f32, shape=(render_height, render_width))
+        
+        self.renderer: Renderer = None
+        self.frame_count = 0
+        self.camera_position = tm.vec3(0, 0, 0)
 
     def _on_resize_callback(self, sender, app_data):
         width, height, _, _ = app_data
@@ -43,14 +48,10 @@ class PyTracer:
     def _get_arch(arch: Arch):
         if arch == Arch.CPU:
             return ti.cpu
-        elif arch == Arch.GPU:
-            return ti.gpu
         elif arch == Arch.CUDA:
             return ti.cuda
         elif arch == Arch.METAL:
             return ti.metal
-        elif arch == Arch.OPENGL:
-            return ti.opengl
         elif arch == Arch.VULKAN:
             return ti.vulkan
         else:
@@ -96,7 +97,39 @@ class PyTracer:
             dpg.add_text(f"Render Resolution: {self.render_width}x{self.render_height}" , tag=self.RENDER_RESOLUTION_LABEL_TAG)
             dpg.add_text(f"Arch: {self.arch_param}")
             dpg.add_text(f"Loot at: 0, 0, 0", tag=self.LOOK_AT_LABEL_TAG)
+
+    def _create_control_window(self):
+        with dpg.window(label="Controls"):
+            dpg.add_slider_int(label="Samples", default_value=1, min_value=1, max_value=100, callback=self._on_samples_change)
+            dpg.add_slider_int(label="Max Bounces", default_value=2, min_value=1, max_value=20, callback=self._on_max_bounces_change)
+            dpg.add_drag_floatx(label="Camera position", default_value=[0,0,0]
+                                , min_value=-10
+                                , max_value=10
+                                , size=3
+                                , callback=self._on_camera_position_change)
     
+    def _on_samples_change(self, sender, app_data):
+        # we need to recompile renderer xd
+        self.frame_count = 0
+        original_scene = self.renderer.scene
+        original_bounces = self.renderer.bounce_limit
+        self.renderer = Renderer(self.screen_buffer
+                                 , tm.vec2(self.render_height, self.render_width)
+                                 , original_scene, original_bounces, app_data)
+
+    def _on_max_bounces_change(self, sender, app_data):
+        self.frame_count = 0
+        original_scene = self.renderer.scene
+        original_samples = self.renderer.samples
+        self.renderer = Renderer(self.screen_buffer
+                                , tm.vec2(self.render_height, self.render_width)
+                                , original_scene, app_data, original_samples)
+        
+    def _on_camera_position_change(self, sender, app_data):
+        self.frame_count = 0
+        self.camera_position = tm.vec3(app_data[0], app_data[1], app_data[2])
+        
+
     def _update_info_window(self):
         dpg.set_value(self.FPS_LABEL_TAG, f"FPS: {dpg.get_frame_rate()}")
         # dpg.set_value(self.RESOLUTION_LABEL_TAG, f"Resolution: {self.width}x{self.height}")
@@ -104,24 +137,27 @@ class PyTracer:
     def run(self):
         self._init_dpg()
         self._create_info_window()
+        self._create_control_window()
 
         from .render import Renderer, Scene, Sphere, Material
-        import taichi.math as tm
+        
 
         scene = Scene()
         scene.map.append(Sphere(tm.vec3(0, 0, 0), 1, Material(tm.vec3(1, 0, 0), tm.vec3(0, 0, 0), 0)))
-        scene.map.append(Sphere(tm.vec3(2, 0, 0), 1, Material(tm.vec3(0, 1, 0), tm.vec3(0, 0, 0), 0)))
+        scene.map.append(Sphere(tm.vec3(2, 0, 0), 1, Material(tm.vec3(0, 0, 1), tm.vec3(0, 0, 0), 0)))
         scene.map.append(Sphere(tm.vec3(0, 5, 5), 4, Material(tm.vec3(0,0,0), tm.vec3(1,1,1), 1.0)))
-        scene.map.append(Sphere(tm.vec3(0, -101, 0), 100, Material(tm.vec3(0,0,1), tm.vec3(0,0,0), 0.0)))
+        scene.map.append(Sphere(tm.vec3(0, -101, 0), 100, Material(tm.vec3(1,1,1), tm.vec3(0,0,0), 0.0)))
 
-        renderer = Renderer(self.screen_buffer, tm.vec2(self.render_height, self.render_width), scene, 4)
+        self.renderer = Renderer(self.screen_buffer, tm.vec2(self.render_height, self.render_width), scene, 2, 1)
         look_at = tm.vec3(1, 0, 0)
         while dpg.is_dearpygui_running():
             
             dpg.set_value(self.LOOK_AT_LABEL_TAG, f"Loot at: {look_at.x:.2f}, {look_at.y:.2f}, {look_at.z:.2f}")
             
-            look_at = tm.vec3(ti.sin(dpg.get_total_time()), 0, ti.cos(dpg.get_total_time()))
-            renderer.render(look_at)
+            # look_at = tm.vec3(ti.sin(dpg.get_total_time()), 0, ti.cos(dpg.get_total_time()))
+            self.renderer.render(self.frame_count,self.camera_position)
+            self.frame_count += 1
+
 
             dpg.set_value(self.SCREEN_BUFFER_TAG, self.screen_buffer.to_numpy())
             self._update_info_window()
