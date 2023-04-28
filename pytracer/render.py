@@ -3,6 +3,9 @@ import taichi.math as tm
 from .rng import Rng
 
 
+INFINITY : ti.f32 = 1e10
+
+
 @ti.dataclass
 class Camera:
     position: tm.vec3
@@ -59,18 +62,24 @@ class Sphere:
     @ti.func
     def intersect(self, ray: Ray) -> Hit: # return distance or negative if no hit
         offsetRayOrigin = ray.origin - self.position
-        a: ti.f32 = tm.dot(ray.direction, ray.direction)
-        b: ti.f32 = 2 * tm.dot(offsetRayOrigin, ray.direction)
-        c: ti.f32 = tm.dot(offsetRayOrigin, offsetRayOrigin) - self.radius * self.radius
 
-        discriminant: ti.f32 = b * b - 4 * a * c
-        hit_info= Hit(tm.vec3(0,0,0), tm.vec3(0,0,0), -1.0, self.material,0)
+        # https://raytracing.github.io/books/RayTracingInOneWeekend.html
+        # 6.2
+        dir_len = tm.length(ray.direction)
+        offset_len = tm.length(offsetRayOrigin)
+        a = dir_len * dir_len
+        half_b = tm.dot(offsetRayOrigin, ray.direction)
+        c = offset_len * offset_len - self.radius * self.radius
+        discriminant = half_b * half_b - a * c
+
+        hit_info= Hit(tm.vec3(0,0,0), tm.vec3(0,0,0), INFINITY, self.material,0)
 
         if discriminant >= 0:
-            hit_info.distance = (-b - tm.sqrt(discriminant)) / (2 * a)
+            hit_info.distance = (-half_b - tm.sqrt(discriminant)) / a
             hit_info.position = ray.origin + ray.direction * hit_info.distance
             hit_info.normal = tm.normalize(self.position - hit_info.position)
             hit_info.hit = ti.cast(1, ti.i8)
+
 
         return hit_info
 
@@ -78,7 +87,6 @@ class Sphere:
 class Scene:
     def __init__(self):
         self.map : Sphere = []
-
 
 @ti.data_oriented
 class Renderer:
@@ -97,7 +105,7 @@ class Renderer:
     def trace_ray(self, ray: Ray) -> Hit:
 
         hit_info = Hit()
-        hit_info.distance = 1000000.0
+        hit_info.distance = INFINITY
         
         for i in ti.static(range(len(self.scene.map))):
             sphere = self.scene.map[i]
@@ -112,39 +120,47 @@ class Renderer:
         ray_color = tm.vec3(1, 1, 1)
         accumulated_light = tm.vec3(0, 0, 0)
 
+
         for _ in range(self.bounce_limit):
             hit_info = self.trace_ray(ray)
+
             if hit_info.hit == 0:
+                # accumulated_light += ray_color * sky_color
                 break
 
             ray.origin = hit_info.position
             ray.direction = tm.normalize(hit_info.normal + rng.random_direction())
 
             light = hit_info.material.emissive_color * hit_info.material.emissive_strength
-            accumulated_light += ray_color * light
-            ray_color *= hit_info.material.color
+            accumulated_light += ray_color * light 
+            ray_color *= hit_info.material.color 
         
         return accumulated_light
+    
+    @ti.func
+    def lerp_vec3(self, a: tm.vec3, b: tm.vec3, t: ti.f32) -> tm.vec3:
+        return a * (1 - t) + b * t
 
     @ti.kernel
-    def render(self,frame_count: ti.u64 , oscilating: tm.vec3):
+    def render(self,frame_count: ti.u64 , campos: tm.vec3):
         for i, j in self.buffer:
             uv = (tm.vec2(i, j) - 0.5 * self.resolution) / self.resolution.x # make 0,0 in the center and fix aspect ratio
             uv = tm.vec2(uv.y, uv.x) # flip x and y ... idk, some kind of taichi -> numpy -> imgui thing
 
+            # self.buffer[i, j] = self.lerp_vec3(tm.vec3(1, 1, 1), tm.vec3(0, 0, 1), uv.y + 0.5)
+
             random_seed : ti.u32 = i * 420420 * j * 696969 + 696969 + frame_count * 42069
             rng = Rng(random_seed)
-
-            campos = oscilating
+            
             cam = Camera(campos, tm.vec3(0,0,0))
             ray = Ray(cam.position, cam.look_at(uv))
-
+  
             final_color = tm.vec3(0,0,0)
             for _ in range(self.samples):
                 final_color += self.calculate_color(ray, rng)
                 rng.next()
 
-            final_color /= self.samples
+            final_color = tm.sqrt(final_color / self.samples)
 
             # progressive rendering
             color_weight: ti.f32 = 1.0 / (frame_count + 1)
